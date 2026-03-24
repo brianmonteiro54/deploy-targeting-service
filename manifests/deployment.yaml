@@ -24,7 +24,6 @@ spec:
         app.kubernetes.io/component: targeting
         app.kubernetes.io/part-of: togglemaster
     spec:
-      # ---- Init Container: Constrói DATABASE_URL com senha URL-encoded ----
       initContainers:
         - name: build-db-url
           image: python:3.12-alpine
@@ -54,18 +53,18 @@ spec:
           env:
             - name: DB_HOST
               valueFrom:
-                configMapKeyRef:
-                  name: togglemaster-config
+                secretKeyRef:
+                  name: targeting-service-config
                   key: TARGETING_DB_HOST
             - name: DB_NAME
               valueFrom:
-                configMapKeyRef:
-                  name: togglemaster-config
+                secretKeyRef:
+                  name: targeting-service-config
                   key: TARGETING_DB_NAME
             - name: DB_PORT
               valueFrom:
-                configMapKeyRef:
-                  name: togglemaster-config
+                secretKeyRef:
+                  name: targeting-service-config
                   key: TARGETING_DB_PORT
             - name: DB_USER
               valueFrom:
@@ -81,7 +80,6 @@ spec:
             - name: shared-data
               mountPath: /shared
 
-      # ---- Container Principal ----
       containers:
         - name: targeting-service
           image: 420414435435.dkr.ecr.us-east-1.amazonaws.com/togglemaster/targeting-service:10ed891e5970edf7f0831423fb8e336406911046
@@ -90,13 +88,11 @@ spec:
             - name: http
               containerPort: 8003
               protocol: TCP
-
           command: ["/bin/sh", "-c"]
           args:
             - |
               export DATABASE_URL=$(cat /shared/database_url)
               exec gunicorn --bind 0.0.0.0:8003 --workers 4 --timeout 60 app:app
-
           env:
             - name: PORT
               value: "8003"
@@ -104,21 +100,18 @@ spec:
               value: "production"
             - name: AUTH_SERVICE_URL
               valueFrom:
-                configMapKeyRef:
-                  name: togglemaster-config
+                secretKeyRef:
+                  name: targeting-service-config
                   key: AUTH_SERVICE_URL
             - name: FLAG_SERVICE_URL
               valueFrom:
-                configMapKeyRef:
-                  name: togglemaster-config
+                secretKeyRef:
+                  name: targeting-service-config
                   key: FLAG_SERVICE_URL
-
           volumeMounts:
             - name: shared-data
               mountPath: /shared
               readOnly: true
-
-          # ---- Health Checks ----
           readinessProbe:
             httpGet:
               path: /health
@@ -127,7 +120,6 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
-
           livenessProbe:
             httpGet:
               path: /health
@@ -136,8 +128,6 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 3
-
-          # ---- Resources ----
           resources:
             requests:
               cpu: 100m
@@ -146,12 +136,9 @@ spec:
               cpu: 300m
               memory: 512Mi
 
-      # ---- Volumes ----
       volumes:
         - name: shared-data
           emptyDir: {}
-
-      # ---- Pod Distribution ----
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
@@ -159,6 +146,5 @@ spec:
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: targeting-service
-
       terminationGracePeriodSeconds: 30
       restartPolicy: Always
