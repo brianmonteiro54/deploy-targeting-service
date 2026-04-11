@@ -7,6 +7,8 @@ metadata:
     app.kubernetes.io/name: targeting-service
     app.kubernetes.io/component: targeting
     app.kubernetes.io/part-of: togglemaster
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   replicas: 2
   selector:
@@ -82,7 +84,7 @@ spec:
 
       containers:
         - name: targeting-service
-          image: 420414435435.dkr.ecr.us-east-1.amazonaws.com/togglemaster/targeting-service:10ed891e5970edf7f0831423fb8e336406911046
+          image: 637423306132.dkr.ecr.us-east-1.amazonaws.com/togglemaster/targeting-service:2c0060d8ed9b402b229642784c0af1ec011176e3
           imagePullPolicy: Always
           ports:
             - name: http

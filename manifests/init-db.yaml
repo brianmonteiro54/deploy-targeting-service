@@ -1,0 +1,119 @@
+## ──────────────────────────────────────────────
+## Job: Database initialization for targeting-service
+## Runs as ArgoCD Sync Hook (wave 1) after ExternalSecrets
+## are synced (wave 0) and before Deployment starts (wave 2).
+## SQL is idempotent (IF NOT EXISTS / OR REPLACE) — safe to re-run.
+## ──────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: targeting-db-init-sql
+  namespace: togglemaster-targeting
+  labels:
+    app.kubernetes.io/name: targeting-service
+    app.kubernetes.io/component: targeting
+    app.kubernetes.io/part-of: togglemaster
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+data:
+  init.sql: |
+    CREATE TABLE IF NOT EXISTS targeting_rules (
+        id SERIAL PRIMARY KEY,
+        flag_name VARCHAR(100) UNIQUE NOT NULL,
+        is_enabled BOOLEAN NOT NULL DEFAULT true,
+        rules JSONB NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE OR REPLACE FUNCTION trigger_set_timestamp()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS set_timestamp ON targeting_rules;
+    CREATE TRIGGER set_timestamp
+    BEFORE UPDATE ON targeting_rules
+    FOR EACH ROW
+    EXECUTE PROCEDURE trigger_set_timestamp();
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: targeting-db-init
+  namespace: togglemaster-targeting
+  labels:
+    app.kubernetes.io/name: targeting-service
+    app.kubernetes.io/component: targeting
+    app.kubernetes.io/part-of: togglemaster
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 120
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: targeting-service
+        app.kubernetes.io/component: db-init
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: psql-init
+          image: postgres:16-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Executando init.sql em ${PGHOST}:${PGPORT}/${PGDATABASE}..."
+              psql -f /mnt/init.sql
+              RESULT=$?
+              if [ $RESULT -eq 0 ]; then
+                echo "Init do banco targeting concluído com sucesso!"
+              else
+                echo "Erro ao executar init.sql (exit code: $RESULT)"
+                exit $RESULT
+              fi
+          env:
+            - name: PGHOST
+              valueFrom:
+                secretKeyRef:
+                  name: targeting-service-config
+                  key: TARGETING_DB_HOST
+            - name: PGPORT
+              valueFrom:
+                secretKeyRef:
+                  name: targeting-service-config
+                  key: TARGETING_DB_PORT
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: targeting-service-config
+                  key: TARGETING_DB_NAME
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: targeting-service-rds
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: targeting-service-rds
+                  key: password
+            - name: PGSSLMODE
+              value: "require"
+          volumeMounts:
+            - name: init-sql
+              mountPath: /mnt
+      volumes:
+        - name: init-sql
+          configMap:
+            name: targeting-db-init-sql
